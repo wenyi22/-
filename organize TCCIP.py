@@ -3,8 +3,8 @@ import os
 import re
 from tqdm import tqdm
 
-folder_path = r"D:\TTCIP\降雨量\historical"
-output_folder = r"D:\TTCIP\降雨量\historical\test"
+folder_path = r"D:\TTCIP\最高溫\historical"
+output_folder = r"D:\TTCIP\最高溫\historical\test"
 output_file_pattern = os.path.join(output_folder, "AR6_統計降尺度_日資料_臺灣_{}_{}_{}.csv")
 
 if not os.path.exists(output_folder):

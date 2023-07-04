@@ -3,7 +3,7 @@ import psycopg2
 # database = "Rawdata_WRA"
 
 # # 建立与数据库的连接
-# conn = psycopg2.connect(database="Rawdata_WRA", user="postgres", password="1!qaz2@wsx", host="140.134.51.64", port="5432")
+# conn = psycopg2.connect(database="Rawdata_WRA", user="postgres", password="password", host="host", port="5432")
 
 # cursor = conn.cursor()
 # create_table_query = '''
@@ -42,7 +42,7 @@ import psycopg2
 database = "Rawdata_WRA"
 
 # 建立與資料庫的連接
-conn = psycopg2.connect(database="Rawdata_WRA", user="postgres", password="1!qaz2@wsx", host="140.134.51.64", port="5432")
+conn = psycopg2.connect(database="Rawdata_WRA", user="postgres", password="password", host="host", port="5432")
 
 
 cursor = conn.cursor()
