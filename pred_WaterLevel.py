@@ -108,9 +108,13 @@ data = data.drop(['Date', 'Time'], axis=1)
 print(data)
 
 # 特徵輸出
+output_folder = 'o_feature_input'
+if not os.path.exists(output_folder):
+    os.makedirs(output_folder)
 df = pd.DataFrame(data)
 
-df.to_csv(f'{columns1}資料.csv', index=True)  # 如果不想保留索引，可以將 index 參數設為 False
+output_path = os.path.join(output_folder, f'{columns1}資料.csv')
+df.to_csv(output_path, index=True)  # 如果不想保留索引，可以將 index 參數設為 False
 
 # 標準化
 scaler = StandardScaler()
@@ -213,39 +217,70 @@ sets = [
     ("Test Set", X_test, y_test)
 ]
 scores = []
+results_dfs = []
+for i, (set_name, X, y) in enumerate(sets):
+    if set_name == "Training Set":
+        start_timestamp = scaled_data.index[0]
+    elif set_name == "Validation Set":
+        start_timestamp = scaled_data.index[train_size - val_size]
+    else:  
+        start_timestamp = scaled_data.index[train_size]
 
-for set_name, X, y in sets:
     forecast, true_values, r2_scores, mape_scores = recursive_forecast(model, X.reset_index(drop=True), y.reset_index(drop=True))
     scores.append((set_name, r2_scores, mape_scores))
 
     # 真實值與預測值繪圖
     plt.figure(figsize=(10,6))
-    plt.plot(true_values, label='True Values')
+    plt.plot(true_values, label='True Values')  
     plt.plot(forecast, label='Forecast')
     plt.legend()
     plt.xlabel('Steps')
     plt.ylabel('Value')
     plt.title(f'True Values and Forecast Values - {set_name} - {columns1}')
     plt.ylim(global_min, global_max)  # 設置y軸的限制
-    if not os.path.exists("picture"):
-        os.makedirs("picture")
+    if not os.path.exists("o_picture"):
+        os.makedirs("o_picture")
 
     # 保存图像到 'picture' 文件夹
-    plt.savefig(f'picture/{set_name}_{columns1}.png')
+    plt.savefig(f'o_picture/{set_name}_{columns1}.png')
     plt.show()
     
     # 儲存結果與分數
+    start_timestamp = scaled_data.index[scaled_data.index.get_loc(start_timestamp) + len(true_values) - len(forecast)] 
     results_df = pd.DataFrame({
-        'Timestamp': pd.date_range(start='2023-01-01', periods=len(forecast), freq='H'),
+        'Timestamp': pd.date_range(start=start_timestamp, periods=len(forecast), freq='H'),
         'True_Values': true_values,
         'Forecast': forecast
     })
-    scores_df = pd.DataFrame(scores, columns=['Set', 'R2_Scores', 'MAPE_Scores'])
+    results_dfs.append(results_df)
+# 保存结果到一个Excel文件
+output_folder = 'o_water_level'
+if not os.path.exists(output_folder):
+    os.makedirs(output_folder)
 
-    # 保存结果到一个Excel文件
-    with pd.ExcelWriter(f'{columns1}_results.xlsx') as writer:
-        results_df.to_excel(writer, sheet_name='Results', index=False)
-        scores_df.to_excel(writer, sheet_name='Scores', index=False)
+output_excel_path = os.path.join(output_folder, f'{columns1}_results.xlsx')
+with pd.ExcelWriter(output_excel_path) as writer:
+    for i, (set_name, _, _) in enumerate(sets):
+        results_dfs[i].to_excel(writer, sheet_name=f'Results_{set_name}', index=False)
+        if set_name == "Training Set":
+            start_timestamp = scaled_data.index[0]
+        elif set_name == "Validation Set":
+            start_timestamp = scaled_data.index[train_size - val_size]
+        else:  # Assuming this is the "Test Set"
+            start_timestamp = scaled_data.index[train_size]
+
+        # Adjust start timestamp for the current set
+        start_timestamp = scaled_data.index[scaled_data.index.get_loc(start_timestamp) + len(y.reset_index(drop=True)) - len(forecast)]
+
+        results_df = pd.DataFrame({
+            'Timestamp': pd.date_range(start=start_timestamp, periods=len(forecast), freq='H'),
+            'True_Values': true_values,
+            'Forecast': forecast
+        })
+        results_df.to_excel(writer, sheet_name=f'Results_{set_name}', index=False)
+    
+    scores_df = pd.DataFrame(scores, columns=['Set', 'R2_Scores', 'MAPE_Scores'])
+    scores_df.to_excel(writer, sheet_name='Scores', index=False)
     
 # 取得重要特徵名稱與重要評分
 feature_importances = model.feature_importances_
@@ -266,14 +301,15 @@ plt.ylabel('Importance Score')
 plt.title('Top 20 Important Features (Sorted)')
 plt.xticks(rotation=90)
 plt.tight_layout()
-if not os.path.exists("picture"):
-    os.makedirs("picture")
+if not os.path.exists("o_picture"):
+    os.makedirs("o_picture")
 
 # 保存图像到 'picture' 文件夹
-plt.savefig(f'picture/Top 20 Important Features {columns1}.png')
+plt.savefig(f'o_picture/Top 20 Important Features {columns1}.png')
 plt.show()  
 
 print("-------------------------------------------------------------------------")
+
 
 def recursive_forecast(model, X_test, y_test, steps=288):
     forecast = []
@@ -288,13 +324,8 @@ def recursive_forecast(model, X_test, y_test, steps=288):
         pred = model.predict(X_test.iloc[i].values.reshape(1, -1))
         forecast.append(pred[0])
 
-        r2 = r2_score(true_values, forecast)
-        mape = mean_absolute_percentage_error(true_values, forecast)
-        
-        r2_scores.append(r2)
-        mape_scores.append(mape)
-    
-    return forecast, true_values, r2_scores, mape_scores
+    return forecast, true_values
+
 
 from joblib import load
 import pandas as pd
@@ -322,47 +353,57 @@ def forecast_from_timestamp(timestamp_str, steps=288):
     X_test = scaled_data.iloc[idx_start:idx_end].drop([target_column_name], axis=1).reset_index(drop=True)
     y_test = scaled_data.iloc[idx_start:idx_end][target_column_name].reset_index(drop=True)
 
+    true_rainfall_values = data.iloc[idx_start:idx_end][columns2].reset_index(drop=True)
+
     # 進行多步預測
-    forecast, true_values, r2_scores, mape_scores = recursive_forecast(model, X_test, y_test)
+    forecast, true_values = recursive_forecast(model, X_test, y_test, steps)
 
     # 四捨五入預測值到小數點後兩位
     forecast = np.round(forecast, 2)
+
+    # 计算累加后的真实值和预测值
+    cum_true_values = np.cumsum(true_values)
+    cum_forecast = np.cumsum(forecast)
+
+    r2 = r2_score(true_values, forecast)
+    mape = mean_absolute_percentage_error(true_values, forecast)
+
+    print(f"T+1 to T+{steps} R²: {r2}, MAPE: {mape}")
+
+    time_series = pd.date_range(start=timestamp + pd.Timedelta(hours=1), periods=steps, freq='H')
     
-    # T+1時刻的R²和MAPE
-    r2_t1 = r2_scores[0]
-    mape_t1 = mape_scores[0]
-
-    # T+1到T+288的平均R²和MAPE
-    avg_r2 = np.nanmean(r2_scores)
-    avg_mape = sum(mape_scores) / len(mape_scores)
-
-    print(f"T+1 to T+288 Average R²: {avg_r2}, Average MAPE: {avg_mape}")
-
-
     results_df = pd.DataFrame({
+        'Timestamp': time_series,  
         'Step': list(range(1, steps + 1)),
         'True Values': true_values,
-        'Forecast Values': forecast,
-        'R² Score': r2_scores,
-        'MAPE Score': mape_scores
-    })
-
-    avg_scores_df = pd.DataFrame({
-        'Metric': ['Average R²', 'Average MAPE'],
-        'Score': [avg_r2, avg_mape]
-    })
-
-
+        'Forecast': forecast
+})
+    results_df['Original Rainfall Values'] = true_rainfall_values
     descriptive_filename = f"{timestamp_str.replace(' ', '_').replace(':', '-')}_{target_column_name}.xlsx"
 
-    with pd.ExcelWriter(descriptive_filename) as writer:
-        results_df[['Step', 'True Values', 'Forecast Values']].to_excel(writer, sheet_name='Values', index=False)
-        results_df[['Step', 'R² Score', 'MAPE Score']].to_excel(writer, sheet_name='Scores', index=False)
-        
-        avg_scores_df.to_excel(writer, sheet_name='Scores', startrow=len(results_df) + 2, index=False)
-
-    print(f"The results have been saved to '{descriptive_filename}'")
+    # 指定你想要保存文件的文件夾
+    output_folder = "o_water_level_event"
     
+    # 檢查文件夾是否存在，如果不存在，則創建它
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    
+    # 創建完整的文件路徑
+    file_path = os.path.join(output_folder, descriptive_filename)
+
+    # 使用完整的文件路徑來保存Excel文件
+    with pd.ExcelWriter(file_path) as writer:
+        results_df[['Step','Timestamp', 'True Values', 'Forecast', 'Original Rainfall Values']].to_excel(writer, sheet_name='Values', index=False)
+
+        # 添加第二个分页，包括R²分数和MAPE分数
+        r2_mape_df = pd.DataFrame({
+            'Metric': ['R² Score', 'MAPE Score'],
+            'Score': [r2, mape]
+        })
+        r2_mape_df.to_excel(writer, sheet_name='R2_MAPE_Scores', index=False)
+
+    print(f"The results have been saved to '{file_path}'")
+
     # 真實值與預測值繪圖
     plt.figure(figsize=(10,6))
     plt.plot(true_values, label='True Values')
@@ -372,82 +413,81 @@ def forecast_from_timestamp(timestamp_str, steps=288):
     plt.ylabel('Value')
     plt.title(f'True Values and Forecast Values (Timestamp: {timestamp_str})')
     plt.ylim(global_min, global_max)  # 設定y軸的限制
-    if not os.path.exists("picture"):
-        os.makedirs("picture")
+    if not os.path.exists("o_picture"):
+        os.makedirs("o_picture")
     image_filename = f'{descriptive_filename.replace(".xlsx", "")}.png'
-    image_path = os.path.join("picture", image_filename)
+    image_path = os.path.join("o_picture", image_filename)
     plt.savefig(image_path, dpi=300)  
     plt.show()
-
 
 # 使用函數進行預測
 forecast_from_timestamp(prd_timestamp1)
 forecast_from_timestamp(prd_timestamp2)
 forecast_from_timestamp(prd_timestamp3)
 
-def forecast_from_timestamp(timestamp_str, steps=288):
-    timestamp = pd.to_datetime(timestamp_str)
-    idx_start = data.index.get_loc(data.loc[data.index >= timestamp].index[0])
-    idx_end = idx_start + steps
+# def forecast_from_timestamp(timestamp_str, steps=288):
+#     timestamp = pd.to_datetime(timestamp_str)
+#     idx_start = data.index.get_loc(data.loc[data.index >= timestamp].index[0])
+#     idx_end = idx_start + steps
 
-    X_test = scaled_data.iloc[idx_start:idx_end].drop([target_column_name], axis=1).reset_index(drop=True)
-    y_test = scaled_data.iloc[idx_start:idx_end][target_column_name].reset_index(drop=True)
+#     X_test = scaled_data.iloc[idx_start:idx_end].drop([target_column_name], axis=1).reset_index(drop=True)
+#     y_test = scaled_data.iloc[idx_start:idx_end][target_column_name].reset_index(drop=True)
 
-    # 多步預測
-    forecast, true_values, r2_scores, mape_scores = recursive_forecast(model, X_test, y_test, steps=steps)
+#     # 多步預測
+#     forecast, true_values, r2_scores, mape_scores = recursive_forecast(model, X_test, y_test, steps=steps)
 
-    # 真實值與預測值繪圖
-    plt.figure(figsize=(10,6))
-    plt.plot(true_values, label='True Values')
-    plt.plot(forecast, label='Forecast')
-    plt.legend()
-    plt.xlabel('Timestamp')
-    plt.ylabel('Value')
-    plt.title('True Values and Forecast Values')
-    plt.ylim(global_min, global_max)  # 设定y轴的限制
-    plt.show()
+#     # 真實值與預測值繪圖
+#     plt.figure(figsize=(10,6))
+#     plt.plot(true_values, label='True Values')
+#     plt.plot(forecast, label='Forecast')
+#     plt.legend()
+#     plt.xlabel('Timestamp')
+#     plt.ylabel('Value')
+#     plt.title('True Values and Forecast Values')
+#     plt.ylim(global_min, global_max)  # 设定y轴的限制
+#     plt.show()
     
 
     
-    # 獲得雨量數據
-    scaled_rainfall = scaled_data.iloc[idx_start:idx_end][columns2].values.reshape(-1,1)
+#     # 獲得雨量數據
+#     scaled_rainfall = scaled_data.iloc[idx_start:idx_end][columns2].values.reshape(-1,1)
     
-    # 創建副本
-    all_features_scaled = scaled_data.iloc[idx_start:idx_end].drop([target_column_name], axis=1).copy()
+#     # 創建副本
+#     all_features_scaled = scaled_data.iloc[idx_start:idx_end].drop([target_column_name], axis=1).copy()
     
-    # 反標準化的直替代雨量的值
-    all_features_scaled[columns2] = scaled_rainfall.ravel()
+#     # 反標準化的直替代雨量的值
+#     all_features_scaled[columns2] = scaled_rainfall.ravel()
     
     
-    # 反標準化
-    all_features_original = scaler.inverse_transform(all_features_scaled.values)
+#     # 反標準化
+#     all_features_original = scaler.inverse_transform(all_features_scaled.values)
     
-    # 將NumPy數組轉換回DataFrame
-    all_features_original_df = pd.DataFrame(all_features_original, columns=all_features_scaled.columns)
+#     # 將NumPy數組轉換回DataFrame
+#     all_features_original_df = pd.DataFrame(all_features_original, columns=all_features_scaled.columns)
     
-    # 獲得雨量反標準化特徵
-    filename_timestamp = timestamp.strftime('%Y%m%d_%H%M%S')
+#     # 獲得雨量反標準化特徵
+#     filename_timestamp = timestamp.strftime('%Y%m%d_%H%M%S')
     
-    if not os.path.exists("picture"):
-        os.makedirs("picture")
+#     if not os.path.exists("o_picture"):
+#         os.makedirs("o_picture")
 
-    # 獲得雨量反標準化特徵
-    original_rainfall = all_features_original_df.loc[:, columns2].values    
-    time_index = np.array(data.index)[idx_start:idx_end]
-    original_rainfall = np.ravel(original_rainfall)
-    # 繪製
-    plt.figure(figsize=(10,6))
-    plt.plot(time_index, original_rainfall, label='Rainfall')
-    plt.xlabel('Timestamp')
-    plt.ylabel('Rainfall')
-    plt.title('Rainfall Over Time')
-    plt.legend()
-    plt.savefig(f"picture/{filename_timestamp}_rainfall.png")
-    plt.show()
+#     # 獲得雨量反標準化特徵
+#     original_rainfall = all_features_original_df.loc[:, columns2].values    
+#     time_index = np.array(data.index)[idx_start:idx_end]
+#     original_rainfall = np.ravel(original_rainfall)
+#     # 繪製
+#     plt.figure(figsize=(10,6))
+#     plt.plot(time_index, original_rainfall, label='Rainfall')
+#     plt.xlabel('Timestamp')
+#     plt.ylabel('Rainfall')
+#     plt.title('Rainfall Over Time')
+#     plt.legend()
+#     plt.savefig(f"o_picture/{filename_timestamp}_rainfall.png")
+#     plt.show()
 
-    return forecast, true_values, r2_scores, mape_scores
+#     return forecast, true_values, r2_scores, mape_scores
 
-# 使用函數進行預測  
-forecast_from_timestamp(prd_timestamp1)
-forecast_from_timestamp(prd_timestamp2)
-forecast_from_timestamp(prd_timestamp3)
+# # 使用函數進行預測  
+# forecast_from_timestamp(prd_timestamp1)
+# forecast_from_timestamp(prd_timestamp2)
+# forecast_from_timestamp(prd_timestamp3)
